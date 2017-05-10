@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
-
+from hashlib import md5
+from serial_parser import SerialParser
 import pyqtgraph as pg
-from pyqtgraph.dockarea import DockArea, Dock, DockDrop
 import time
-import os
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 import numpy as np
-import serial
 from serial.tools import list_ports
+from serial import Serial
 
 pg.setConfigOption('background', pg.mkColor('#31363b'))
 
@@ -34,52 +33,91 @@ class MainWindow(TemplateBaseClass):
         self.ui.plot.setRange(xRange=[-100, 0])
         self.ui.plot.setLimits(xMax=0)
 
-        self.portSelector = PortSelector(self.ui.portList, self.ui.port_open_b, self.ui.port_close_b, self.ui.port_refresh_b)
+        self.portSelector = PortSelector(self.ui.portList)
 
         self.curve = self.ui.plot.plot()
-        self.data = np.empty(100)
+        self.data = np.empty(0)
         self.ptr = 0
 
-    def update(self, data):
-        self.data[self.ptr] = data
-        self.ptr += 1
-        if self.ptr >= self.data.shape[0]:
-            tmp = self.data
-            self.data = np.empty(self.data.shape[0] * 2)
-            self.data[:tmp.shape[0]] = tmp
-        self.curve.setData(self.data[:self.ptr])
-        self.ui.plot.getPlotItem().setLabel('top', "%f" % self.ptr)
-        self.curve.setPos(-self.ptr, 0)
+        self.show()
+
+    def update(self, sample):
+        self.data = np.append(self.data, sample)
+        self.curve.setData(self.data)
+        self.ui.plot.getPlotItem().setLabel('top', "%d" % self.data.shape[0])
+        self.curve.setPos(-self.data.shape[0], 0)
+
+class Port(Serial):
+    def __init__(self, port_data, *args, **kwargs):
+        self.description = port_data[1]
+        Serial.__init__(self, *args, **kwargs)
+        self.port = port_data[0]
+
+    # @classmethod
+    # def refresh(cls):
+    #     cls.ports = [Port(p) for p in list_ports.comports()]
+    #
+    def __eq__(self, other):
+        return (isinstance(other, Port) and self.name == other.name and self.description == other.description)
+
+    def __hash__(self):
+        return hash((self.description, self.name))
 
 class PortSelector():
-    def __init__(self,
-                 list_w:QtWidgets.QListWidget,
-                 open_b:QtWidgets.QPushButton,
-                 close_b:QtWidgets.QPushButton,
-                 refresh_b:QtWidgets.QPushButton):
+    def __init__(self, list_w:QtWidgets.QListWidget):
         self.list_w = list_w
-        self.open_b = open_b
-        self.close_b = close_b
-        self.refresh_b = refresh_b
 
-        self.ports = []
+        # self.ports = set()
+        self.port = None
 
-        self.refresh_b.clicked.connect(self.refresh)
+        self.port
+
+        self.list_w.itemClicked.connect(self.setPort)
+
+        self.refresh_timer = QtCore.QTimer()
+        self.refresh_timer.timeout.connect(self.refresh)
+        self.refresh_timer.start(1000)
 
         self.refresh()
 
     def refresh(self):
-        self.ports = [('RND', 'Random generator'),]
-        self.ports += list(list_ports.comports())
-        self.list_w.clear()
-        for port in self.ports:
-            self.list_w.addItem(f"{port[0]} - {port[1]}")
+        l = list(list_ports.comports())
+        new_ports = [Port(p) for p in l]
+        old_ports = self.getPortList()
 
-    def open(self):
-        pass
+        # Add new ports to list
+        for p in new_ports:
+            if p not in self.getPortList():
+                item = QtWidgets.QListWidgetItem(f"{p.port} - {p.description}", parent=self.list_w)
+                item.setData(QtCore.Qt.UserRole, p)
 
-    def close(self):
-        pass
+        # Remove disappeared ports from list
+        for i in range(self.list_w.count()):
+            if(self.list_w.item(i) is not None):
+                p = self.list_w.item(i).data(QtCore.Qt.UserRole)
+                if p not in new_ports:
+                    self.list_w.takeItem(i)
+
+    def setPort(self, item:QtWidgets.QListWidgetItem):
+        port = item.data(QtCore.Qt.UserRole)
+
+        if port.isOpen():
+            port.close()
+            item.setBackground(QtGui.QColor(0, 0, 0, 0))
+            item.setSelected(False)
+        else:
+            port.open()
+            item.setBackground(QtGui.QColor(0, 255, 0, 127))
+            item.setSelected(False)
+
+        print(self.getPortList())
+
+        # self.port = SerialParser(self.ports[self.list_w.currentRow()][0])
+
+    def getPortList(self)->list:
+        return [self.list_w.item(i).data(QtCore.Qt.UserRole) for i in range(self.list_w.count())]
+
+
 
 
 
@@ -132,14 +170,9 @@ class Generator(QtCore.QThread):
 gen = Generator(win.update)
 gen.start()
 
-win.show()
-
 ## Start Qt event loop unless running in interactive mode or using pyside.
 if __name__ == '__main__':
     import sys
-
-    for port in list_ports.comports():
-        print(port)
 
     if (sys.flags.interactive != 1) or not hasattr(QtCore, 'PYQT_VERSION'):
         QtGui.QApplication.instance().exec_()
