@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 import threading
 from hashlib import md5
-from serial_parser import SerialParser
 import pyqtgraph as pg
 import time
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
@@ -73,6 +72,8 @@ class Port(QtWidgets.QListWidgetItem):
         self.emitter = Emitter()
 
         self.readThread = threading.Thread(target=self.listen)
+        self.close_request = None
+
         QtWidgets.QListWidgetItem.__init__(self, f"{port_data[0]} - {port_data[1]}")
 
     def open(self, baudrate, parity, bytesize):
@@ -84,7 +85,7 @@ class Port(QtWidgets.QListWidgetItem):
         self.emitter.connect()
 
     def close(self):
-        self.serial.close()
+        self.close_request = True
 
     def isOpen(self):
         return self.serial.isOpen()
@@ -99,7 +100,7 @@ class Port(QtWidgets.QListWidgetItem):
         return self.serial.__repr__()
 
     def listen(self):
-        while self.serial.isOpen():
+        while not self.close_request and self.serial.isOpen():
             try:
                 self.line = self.serial.read(1)
                 if self.line:
@@ -108,6 +109,7 @@ class Port(QtWidgets.QListWidgetItem):
                     # self.emitter.emit(str(self.line))
             except SerialException:
                 self.close()
+        self.serial.close()
 
 class PortSelector():
     def __init__(self,
@@ -156,6 +158,7 @@ class PortSelector():
             if(self.list_w.item(i) is not None):
                 p = self.list_w.item(i)
                 if p not in new_ports:
+                    p.close()
                     self.list_w.takeItem(i)
 
     def setPort(self, port:Port):
