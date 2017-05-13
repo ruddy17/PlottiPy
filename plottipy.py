@@ -3,6 +3,8 @@ import threading
 from hashlib import md5
 import pyqtgraph as pg
 import time
+
+import struct
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 import numpy as np
 from serial.tools import list_ports
@@ -102,11 +104,15 @@ class Port(QtWidgets.QListWidgetItem):
     def listen(self):
         while not self.close_request and self.serial.isOpen():
             try:
-                self.line = self.serial.read(1)
+                self.line = self.serial.readline()
                 if self.line:
                     print(self.line)
-                    self.emitter.emit(np.random.normal())
-                    # self.emitter.emit(str(self.line))
+                    # self.emitter.emit(np.random.normal())
+                    try:
+                        s = struct.unpack('<hhx', self.line)
+                        self.emitter.emit(s[1])
+                    except struct.error:
+                        pass
             except SerialException:
                 self.close()
         self.serial.close()
