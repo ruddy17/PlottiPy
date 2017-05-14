@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 import threading
-from hashlib import md5
 import pyqtgraph as pg
 import time
-
+import sys
 import struct
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 import numpy as np
@@ -43,8 +42,6 @@ class MainWindow(TemplateBaseClass):
         self.plots = []
         self.data = []
 
-        self.show()
-
     def update(self, sample:tuple):
         while len(self.data) < len(sample):
             self.data.append(np.empty(0))
@@ -55,6 +52,11 @@ class MainWindow(TemplateBaseClass):
             self.plots[i].setData(self.data[i])
             # self.ui.plot.getPlotItem().setLabel('top', "%d" % self.data.shape[0])
             self.plots[i].setPos(-self.data[i].shape[0], 0)
+
+    def closeEvent(self, event):
+        for p in self.portSelector.getPortList:
+            p.close()
+        event.accept()
 
 class Emitter(QtCore.QObject):
     newSample = QtCore.pyqtSignal(tuple)
@@ -218,8 +220,6 @@ class PortSelector():
         return [self.list_w.item(i) for i in range(self.list_w.count())]
 
 
-win = MainWindow()
-
 # vLine = pg.InfiniteLine(angle=90, movable=False)
 # hLine = pg.InfiniteLine(angle=0, movable=False)
 # p3.addItem(vLine, ignoreBounds=True)
@@ -267,7 +267,8 @@ class Generator(QtCore.QThread):
 
 ## Start Qt event loop unless running in interactive mode or using pyside.
 if __name__ == '__main__':
-    import sys
+    win = MainWindow()
+    win.show()
 
     if (sys.flags.interactive != 1) or not hasattr(QtCore, 'PYQT_VERSION'):
-        QtGui.QApplication.instance().exec_()
+        sys.exit(QtGui.QApplication.instance().exec_())
