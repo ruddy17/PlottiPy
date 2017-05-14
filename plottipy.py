@@ -40,20 +40,24 @@ class MainWindow(TemplateBaseClass):
                                          self.ui.parity,
                                          self.ui.bytesize)
 
-        self.curve = self.ui.plot.plot()
-        self.data = np.empty(0)
-        self.ptr = 0
+        self.plots = []
+        self.data = []
 
         self.show()
 
-    def update(self, sample):
-        self.data = np.append(self.data, sample)
-        self.curve.setData(self.data)
-        self.ui.plot.getPlotItem().setLabel('top', "%d" % self.data.shape[0])
-        self.curve.setPos(-self.data.shape[0], 0)
+    def update(self, sample:tuple):
+        while len(self.data) < len(sample):
+            self.data.append(np.empty(0))
+            self.plots.append(self.ui.plot.plot())
+
+        for (i,s) in enumerate(sample):
+            self.data[i] = np.append(self.data[i], s)
+            self.plots[i].setData(self.data[i])
+            # self.ui.plot.getPlotItem().setLabel('top', "%d" % self.data.shape[0])
+            self.plots[i].setPos(-self.data[i].shape[0], 0)
 
 class Emitter(QtCore.QObject):
-    newSample = QtCore.pyqtSignal(float)
+    newSample = QtCore.pyqtSignal(tuple)
 
     def __init__(self):
         QtCore.QObject.__init__(self)
@@ -64,58 +68,71 @@ class Emitter(QtCore.QObject):
     def emit(self, data):
         self.newSample.emit(data)
 
+
 class Port(QtWidgets.QListWidgetItem):
 
     def __init__(self, port_data, *args, **kwargs):
 
-        self.serial = Serial()
-        self.serial.port = port_data[0]
+        self.serial = None
+        self.port = port_data[0]
         self.description = port_data[1]
-        self.emitter = Emitter()
-
-        self.readThread = threading.Thread(target=self.listen)
+        self.emitter = None
+        self.readThread = None
         self.close_request = None
 
         QtWidgets.QListWidgetItem.__init__(self, f"{port_data[0]} - {port_data[1]}")
 
     def open(self, baudrate, parity, bytesize):
+        self.serial = Serial(timeout=1)
+        self.serial.port = self.port
         self.serial.baudrate = int(baudrate)
         self.serial.parity = parity[0]
         self.serial.bytesize = int(bytesize)
         self.serial.open()
+        self.readThread = threading.Thread(target=self.listen)
         self.readThread.start()
+        self.emitter = Emitter()
         self.emitter.connect()
 
     def close(self):
-        self.close_request = True
+        if(self.serial):
+            self.serial.close()
 
     def isOpen(self):
-        return self.serial.isOpen()
+        return self.serial and self.serial.isOpen()
 
     def __eq__(self, other):
-        return (isinstance(other, Port) and self.serial.port == other.serial.port and self.description == other.description)
+        return (isinstance(other, Port) and self.port == other.port and self.description == other.description)
 
     def __hash__(self):
-        return hash((self.description, self.serial.port))
+        return hash((self.description, self.port))
 
     def __repr__(self):
         return self.serial.__repr__()
 
     def listen(self):
-        while not self.close_request and self.serial.isOpen():
+        eol = b'\n'
+        eol_len = len(eol)
+        line = bytearray()
+
+        while True:
             try:
-                self.line = self.serial.readline()
-                if self.line:
-                    print(self.line)
-                    # self.emitter.emit(np.random.normal())
-                    try:
-                        s = struct.unpack('<hhx', self.line)
-                        self.emitter.emit(s[1])
-                    except struct.error:
-                        pass
+                c = self.serial.read(1)
+                if c:
+                    line += c
+                    if line[-eol_len:] == eol:
+                        print(line)
+                        sample = struct.unpack('<' + 'h'*(len(line[:-eol_len])//2), line[:-eol_len])
+                        print(sample)
+                        self.emitter.emit(sample[-2:])
+                        line = bytearray()
             except SerialException:
-                self.close()
-        self.serial.close()
+                return
+            except AttributeError:
+                return
+            except struct.error:
+                continue
+
 
 class PortSelector():
     def __init__(self,
@@ -131,7 +148,6 @@ class PortSelector():
         self.baudrate_validator = QtGui.QIntValidator()
         self.baudrate_combo.setValidator(self.baudrate_validator)
 
-        # self.ports = set()
         self.port = None
 
         self.list_w.itemClicked.connect(self.setPort)
@@ -155,9 +171,7 @@ class PortSelector():
         # Add new ports to list
         for p in new_ports:
             if p not in self.getPortList():
-                # item = QtWidgets.QListWidgetItem(f"{p.serial.port} - {p.description}", parent=self.list_w)
                 self.list_w.addItem(p)
-                # item.setData(QtCore.Qt.UserRole, p)
 
         # Remove disappeared ports from list
         for i in range(self.list_w.count()):
@@ -181,6 +195,10 @@ class PortSelector():
                 print(e)
                 port.setBackground(QtGui.QColor(255, 0, 0, 127))
                 self.check_availability_list.append(port)
+            except ValueError as e:
+                print(e)
+                port.setBackground(QtGui.QColor(255, 0, 0, 127))
+
         port.setSelected(False)
 
         print(self.getPortList())
